@@ -2476,15 +2476,30 @@ function toast(msg,type,dur){
   setTimeout(function(){el.style.opacity='0';el.style.transform='translateX(20px)';el.style.transition='all .3s';setTimeout(function(){el.remove();},300);},dur);
 }
 function inits(n){if(!n)return'--';var p=n.trim().split(' ');return p.length===1?p[0].slice(0,2).toUpperCase():(p[0][0]+p[p.length-1][0]).toUpperCase();}
-function fmtDate(d){
-  d=d||new Date();
-  var dn=['Min','Sen','Sel','Rab','Kam','Jum','Sab'],mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
-  return dn[d.getDay()]+', '+d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+function fmtDate(d) {
+  // Jika d adalah string, konversi ke Date
+  if (typeof d === 'string') {
+    d = new Date(d);
+  }
+  // Jika d bukan objek Date yang valid, gunakan waktu sekarang
+  if (!(d instanceof Date) || isNaN(d.getTime())) {
+    d = new Date();
+  }
+  
+  var dn = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  var mn = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  
+  return dn[d.getDay()] + ', ' + 
+         d.getDate().toString().padStart(2, '0') + ' ' + 
+         mn[d.getMonth()] + ' ' + 
+         d.getFullYear() + ' ' + 
+         d.getHours().toString().padStart(2, '0') + ':' + 
+         d.getMinutes().toString().padStart(2, '0');
 }
 function fmtDateShort(d){
-  d=d?new Date(d):new Date();
-  var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
-  return d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear();
+d=d?new Date(d):new Date();
+var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+return d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear();
 }
 function fileSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(2)+'MB';}
 function setEl(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
@@ -3487,30 +3502,32 @@ async function exportSheets(){
 async function loadFromSheets() {
   if (!APP.gasUrl) {
     toast('GAS URL belum dikonfigurasi', 'warning');
-    return;
+    return false;
   }
   
   toast('📥 Memuat data dari Google Sheets...', 'info', 3000);
   
   try {
-    // 1. Ambil data tim
     var timResult = await gasPost({
       action: 'get_rekap',
       tahun: ''
     }, 'get_rekap');
     
-    if (timResult && timResult.success && timResult.data) {
-      // Konversi data dari Sheets ke format APP
-      var dataFromSheets = timResult.data;
+    if (!timResult || !timResult.success) {
+      toast('Gagal memuat data: ' + (timResult ? timResult.message : 'Tidak ada respons'), 'warning');
+      return false;
+    }
+    
+    if (timResult.data && timResult.data.length > 0) {
       var multiTim = [];
       
-      dataFromSheets.forEach(function(row) {
+      timResult.data.forEach(function(row) {
         var stNomor = row['No. Surat Tugas'] || '';
         var ketua = row['Ketua Tim'] || '';
         var id = (stNomor || ketua).replace(/[\/\s]/g, '_');
         
         multiTim.push({
-          id: id,
+          id: id || 'tim_' + Date.now(),
           ketua: ketua,
           stNomor: stNomor,
           stPerihal: row['Perihal / Objek Reviu'] || '—',
@@ -3529,13 +3546,20 @@ async function loadFromSheets() {
       APP.multiTim = multiTim;
       
       toast('✅ ' + multiTim.length + ' data tim dimuat dari Sheets', 'success');
+      
+      // Update tampilan
       renderDashboard();
-      refreshAdminDash();
+      if (typeof refreshAdminDash === 'function') refreshAdminDash();
+      if (typeof populateDRFilters === 'function') populateDRFilters();
+      
       return true;
+    } else {
+      toast('ℹ️ Belum ada data di Sheets', 'info');
+      return false;
     }
   } catch (err) {
     console.error('loadFromSheets error:', err);
-    toast('Gagal memuat data dari Sheets', 'error');
+    toast('Gagal memuat data dari Sheets: ' + err.message, 'error');
     return false;
   }
 }
