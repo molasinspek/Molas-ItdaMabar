@@ -1186,8 +1186,10 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
               <div class="card-title">📐 Fase 1 — Perencanaan</div>
               <div class="card-sub">Upload seluruh dokumen perencanaan sebelum pelaksanaan reviu</div>
             </div>
-            <div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
               <div style="font-family:'Sora',sans-serif;font-size:26px;font-weight:800;color:var(--accent);text-align:right" id="pct-fase1">0%</div>
+              <button class="btn btn-outline btn-sm" onclick="openDriveFolder('fase1')" style="font-size:11px">📂 Folder Drive</button>
+            </div>
               <div style="font-size:11px;color:var(--muted);text-align:right" id="pct-fase1-sub">0 dari 0 dokumen</div>
             </div>
           </div>
@@ -1214,9 +1216,10 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
               <div class="card-title">⚙️ Fase 2 — Pelaksanaan</div>
               <div class="card-sub">Upload dokumen selama proses pelaksanaan reviu</div>
             </div>
-            <div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
               <div style="font-family:'Sora',sans-serif;font-size:26px;font-weight:800;color:var(--amber);text-align:right" id="pct-fase2">0%</div>
               <div style="font-size:11px;color:var(--muted);text-align:right" id="pct-fase2-sub">0 dari 0 dokumen</div>
+              <button class="btn btn-outline btn-sm" onclick="openDriveFolder('fase2')" style="font-size:11px">📂 Folder Drive</button>
             </div>
           </div>
           <div class="prog-track" style="margin-bottom:16px">
@@ -1242,9 +1245,10 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
               <div class="card-title">📄 Fase 3 — Pelaporan</div>
               <div class="card-sub">Upload dokumen laporan hasil reviu</div>
             </div>
-            <div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
               <div style="font-family:'Sora',sans-serif;font-size:26px;font-weight:800;color:var(--green);text-align:right" id="pct-fase3">0%</div>
               <div style="font-size:11px;color:var(--muted);text-align:right" id="pct-fase3-sub">0 dari 0 dokumen</div>
+              <button class="btn btn-outline btn-sm" onclick="openDriveFolder('fase3')" style="font-size:11px">📂 Folder Drive</button>
             </div>
           </div>
           <div class="prog-track" style="margin-bottom:16px">
@@ -1343,7 +1347,10 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
         <div class="card">
           <div class="card-header">
             <div><div class="card-title">📋 Progress Seluruh Tim</div></div>
-            <button class="btn btn-outline btn-sm" onclick="refreshAdminDash()">🔄 Refresh</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-outline btn-sm" onclick="gasSyncMultiTim()">☁️ Sync ke Sheets</button>
+              <button class="btn btn-outline btn-sm" onclick="refreshAdminDash()">🔄 Refresh</button>
+            </div>
           </div>
           <table class="team-table" id="adminTeamTable">
             <thead>
@@ -1921,6 +1928,7 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
             <div style="margin-left:auto;display:flex;gap:8px">
               <button class="btn btn-outline btn-sm" onclick="exportJadwalPDF()">📄 Ekspor PDF</button>
               <button class="btn btn-outline btn-sm" onclick="exportJadwalCSV()">📊 Ekspor Spreadsheet</button>
+              <button class="btn btn-outline btn-sm" onclick="gasSyncJadwal().then(function(){toast('☁️ Jadwal tersinkronisasi ke Sheets','success');})">☁️ Sync Jadwal</button>
             </div>
           </div>
         </div>
@@ -1993,6 +2001,8 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
             <div style="display:flex;gap:8px">
               <button class="btn btn-outline btn-sm" onclick="exportDRPDF()">📄 Ekspor PDF</button>
               <button class="btn btn-outline btn-sm" onclick="exportDRCSV()">📊 Ekspor Spreadsheet</button>
+              <button class="btn btn-outline btn-sm" onclick="gasSyncMultiTim()">☁️ Sync ke Sheets</button>
+              <button class="btn btn-outline btn-sm" onclick="loadRekapFromSheets(document.getElementById('drTahun').value)">📥 Muat dari Sheets</button>
             </div>
           </div>
           <div style="overflow-x:auto">
@@ -2059,6 +2069,193 @@ var APP = {
   gasUrl:    localStorage.getItem('molas_gas')||'',
   multiTim:  JSON.parse(localStorage.getItem('molas_multi_tim')||'[]'),
 };
+
+// ════════════════════════════════════════
+// GAS INTEGRATION — HELPER FUNCTIONS
+// ════════════════════════════════════════
+/**
+ * Kirim POST JSON ke GAS Web App. Mengembalikan object result atau {success:false}.
+ *
+ * PENTING: Content-Type sengaja 'text/plain;charset=utf-8', BUKAN
+ * 'application/json'. Web App Google Apps Script tidak menangani request
+ * preflight CORS (OPTIONS) yang otomatis dikirim browser kalau Content-Type
+ * di-set ke 'application/json' — akibatnya fetch() akan gagal dengan error
+ * CORS meskipun script GAS-nya sendiri tidak error. Dengan 'text/plain',
+ * browser menganggapnya "simple request" (tanpa preflight), dan doPost() di
+ * GAS tetap bisa JSON.parse(e.postData.contents) seperti biasa karena yang
+ * dicek di sana adalah isi body, bukan header Content-Type.
+ */
+async function gasPost(payload, label) {
+  var url = APP.gasUrl;
+  if (!url) return { success: false, message: 'GAS URL belum dikonfigurasi. Buka panel Google Drive → isi URL Web App GAS.' };
+  var raw = '';
+  try {
+    var res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+    });
+    raw = await res.text();
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    try {
+      return JSON.parse(raw);
+    } catch (parseErr) {
+      // Respons bukan JSON → biasanya URL salah, GAS belum dideploy sebagai
+      // "Anyone" access, atau script GAS sedang error fatal (bukan dari try/catch).
+      throw new Error('Respons GAS bukan JSON (kemungkinan URL salah, deployment belum diatur "Anyone" access, atau script GAS error). Potongan respons: ' + raw.slice(0, 120));
+    }
+  } catch (err) {
+    console.warn('[MOLAS GAS]', (label || payload.action), '—', err.message);
+    return { success: false, message: err.message };
+  }
+}
+
+/**
+ * Tes koneksi ke Web App GAS dengan request GET sederhana (doGet).
+ * Dipakai oleh tombol "Tes Koneksi" di panel Google Drive.
+ */
+async function testGasConnection() {
+  var url = APP.gasUrl;
+  if (!url) { toast('Isi dulu URL Google Apps Script', 'error'); return; }
+  toast('🔄 Menguji koneksi ke GAS...', 'info', 3000);
+  try {
+    var res = await fetch(url, { method: 'GET' });
+    var raw = await res.text();
+    var data;
+    try { data = JSON.parse(raw); } catch (e) {
+      toast('⚠️ URL merespons tapi bukan JSON. Pastikan ini URL deployment yang diakhiri "/exec" dan akses diatur "Anyone".', 'warning', 6000);
+      return;
+    }
+    if (data && data.status === 'online') {
+      toast('✅ Terhubung ke ' + (data.app || 'GAS') + ' (v' + (data.versi || '?') + ')', 'success', 4000);
+    } else {
+      toast('⚠️ GAS merespons tapi format tidak terduga.', 'warning', 4000);
+    }
+  } catch (err) {
+    toast('❌ Gagal terhubung: ' + err.message + '. Cek kembali URL deployment-nya.', 'error', 6000);
+  }
+}
+
+/** Konversi File ke Base64 string (tanpa prefix data:...) */
+function fileToBase64(file) {
+  return new Promise(function(resolve, reject) {
+    var r = new FileReader();
+    r.onload  = function(e) { resolve(e.target.result.split(',')[1]); };
+    r.onerror = function()  { reject(new Error('Gagal membaca file')); };
+    r.readAsDataURL(file);
+  });
+}
+
+/** Log login ke GAS — dipanggil dari doLogin() */
+async function gasLogLogin(user, role) {
+  await gasPost({
+    action: 'log_activity', user: user || '—', aksi: 'LOGIN',
+    detail: 'Login sebagai ' + (role || 'user') + ' — ' + new Date().toLocaleString('id-ID'),
+    fase: '—', ketua: '—', stNomor: '—', status: 'Sukses', fileUrl: '',
+  }, 'log_login');
+}
+
+/** Log logout ke GAS — dipanggil dari doLogout() */
+async function gasLogLogout() {
+  await gasPost({
+    action: 'log_activity', user: APP.user || '—', aksi: 'LOGOUT',
+    detail: 'Logout — ' + new Date().toLocaleString('id-ID'),
+    fase: '—', ketua: APP.tim.ketua || '—', stNomor: APP.tim.stNomor || '—', status: 'Sukses', fileUrl: '',
+  }, 'log_logout');
+}
+
+/** Kirim data tim ke GAS — dipanggil dari saveSetup() */
+async function gasPostTim() {
+  if (!APP.gasUrl) return;
+  await gasPost({
+    action: 'save_tim',
+    ketua: APP.tim.ketua || '—', ketuaNIP: APP.tim.ketuaNIP || '—',
+    wakilPJ: APP.tim.wakilPJ || '—', wakilPJNIP: APP.tim.wakilPJNIP || '—',
+    pengendali: APP.tim.pengendali || '—', pengendaliNIP: APP.tim.pengendaliNIP || '—',
+    anggota: APP.tim.anggota,
+    stNomor: APP.tim.stNomor || '—', stTanggal: APP.tim.stTanggal || '—',
+    stPerihal: APP.tim.stPerihal || '—', jenis: APP.jenisPengawasan || '—',
+    user: APP.user || '—',
+  }, 'save_tim');
+}
+
+/** Hapus file dari Drive saat removeDoc() */
+async function gasDeleteFile(fase, id) {
+  if (!APP.gasUrl) return;
+  var d = APP.docs[fase] && APP.docs[fase][id];
+  if (!d || !d.driveFileId) return;
+  await gasPost({
+    action: 'delete_file', fileId: d.driveFileId, docId: id,
+    fase: fase, ketua: APP.tim.ketua || '—', stNomor: APP.tim.stNomor || '—', user: APP.user || '—',
+  }, 'delete_file');
+}
+
+/** Sinkronisasi jadwal ke GAS Sheets */
+async function gasSyncJadwal() {
+  if (!APP.gasUrl) return { success: false, message: 'GAS URL belum dikonfigurasi.' };
+  var jadwal = JSON.parse(localStorage.getItem('molas_jadwal') || '[]');
+  return await gasPost({
+    action: 'sync_jadwal', ketua: APP.tim.ketua || '—',
+    stNomor: APP.tim.stNomor || '—', user: APP.user || '—', jadwal: jadwal,
+  }, 'sync_jadwal');
+}
+
+/** Sinkronisasi semua tim ke Sheets dari panel Admin */
+async function gasSyncMultiTim() {
+  if (!APP.gasUrl) { toast('GAS URL belum dikonfigurasi', 'error'); return; }
+  var multiTim = JSON.parse(localStorage.getItem('molas_multi_tim') || '[]');
+  toast('🔄 Sinkronisasi data tim ke Sheets...', 'info', 3000);
+  var result = await gasPost({
+    action: 'sync_multi_tim', user: APP.user || '—', multiTim: multiTim,
+  }, 'sync_multi_tim');
+  if (result && result.success) toast('✅ ' + result.message, 'success');
+  else toast('⚠️ Sinkronisasi gagal: ' + (result ? result.message : 'error'), 'warning');
+}
+
+/** Buka folder Google Drive untuk fase tertentu */
+async function openDriveFolder(fase) {
+  if (!APP.gasUrl) { toast('GAS URL belum dikonfigurasi', 'error'); return; }
+  if (!APP.tim.ketua || !APP.tim.stNomor) { toast('Setup tim terlebih dahulu', 'warning'); return; }
+  var result = await gasPost({
+    action: 'get_folder_url', ketua: APP.tim.ketua, stNomor: APP.tim.stNomor, fase: fase,
+  }, 'get_folder_url');
+  if (result && result.success && result.folderUrl) {
+    window.open(result.folderUrl, '_blank');
+    toast('☁️ Membuka folder Drive ' + fase + '...', 'success');
+  } else {
+    toast('Gagal mendapatkan link folder Drive', 'warning');
+  }
+}
+
+/** Ambil rekap dari Sheets dan merge ke data lokal */
+async function loadRekapFromSheets(tahun) {
+  if (!APP.gasUrl) return;
+  var result = await gasPost({ action: 'get_rekap', tahun: tahun || '' }, 'get_rekap');
+  if (result && result.success && Array.isArray(result.data)) {
+    var localTim = JSON.parse(localStorage.getItem('molas_multi_tim') || '[]');
+    result.data.forEach(function(row) {
+      var stNomor = row['No. Surat Tugas'] || '';
+      var ketua   = row['Ketua Tim'] || '';
+      var id      = (stNomor || ketua).replace(/[\/\s]/g, '_');
+      if (!localTim.find(function(t) { return t.id === id; })) {
+        localTim.push({
+          id: id, ketua: ketua, stNomor: stNomor,
+          stPerihal: row['Perihal / Objek Reviu'] || '—',
+          jenis: row['Jenis Pengawasan'] || '—', anggota: 0,
+          p1: Number(row['Fase 1 (%)']) || 0,
+          p2: Number(row['Fase 2 (%)']) || 0,
+          p3: Number(row['Fase 3 (%)']) || 0,
+          total: Number(row['Total (%)']) || 0,
+          lastUpdate: row['Timestamp Update'] || new Date().toISOString(),
+        });
+      }
+    });
+    localStorage.setItem('molas_multi_tim', JSON.stringify(localTim));
+    APP.multiTim = localTim;
+    toast('📊 ' + result.total + ' data diambil dari Google Sheets', 'success');
+    if (typeof populateDRFilters === 'function') { populateDRFilters(); applyDRFilter(); }
+  }
+}
 
 // ════════════════════════════════════════
 // JENIS PENGAWASAN & DOKUMEN DATABASE
@@ -2359,7 +2556,8 @@ function saveState(){
           fileName:d.file?d.file.name:(d.fileName||''),
           fileSize:d.file?d.file.size:(d.fileSize||0),
           uploadedAt:d.uploadedAt?new Date(d.uploadedAt).toISOString():'',
-          gdriveLink:d.gdriveLink||''
+          gdriveLink:d.gdriveLink||'',
+          driveFileId:d.driveFileId||''
         };
       });
     });
@@ -2399,9 +2597,13 @@ function doLogin(){
   }
   initApp();
   toast('Selamat datang, '+name+'! 👋','success');
+  // GAS: Log aktivitas login
+  gasLogLogin(name, role);
 }
 function doLogout(){
   if(!confirm('Keluar dari sistem?'))return;
+  // GAS: Log aktivitas logout
+  gasLogLogout();
   saveState();
   document.getElementById('appScreen').classList.remove('active');
   document.getElementById('loginScreen').classList.add('active');
@@ -2433,6 +2635,7 @@ function initApp(){
             APP.docs[fase][id].fileName   = d.fileName || '';
             APP.docs[fase][id].fileSize   = d.fileSize || 0;
             APP.docs[fase][id].gdriveLink = d.gdriveLink || '';
+            APP.docs[fase][id].driveFileId= d.driveFileId || '';
             if (d.uploadedAt) APP.docs[fase][id].uploadedAt = new Date(d.uploadedAt);
             // file is null (can't restore File object) but hasUploaded tracks upload state
           });
@@ -2660,6 +2863,13 @@ function saveSetup(){
   APP.jenisPengawasan='rrs';
   addLog('Setup tim — Ketua: '+ketua+' | ST: '+nomor,'setup');
   saveState();
+  // GAS: Simpan data tim ke Sheets + log aktivitas
+  gasPostTim();
+  gasPost({
+    action:'log_activity', user:APP.user||'—', aksi:'SETUP_TIM',
+    detail:'Ketua: '+ketua+' | ST: '+nomor+' | '+perihal,
+    fase:'—', ketua:ketua, stNomor:nomor, status:'Sukses', fileUrl:'',
+  });
   renderDocLists();
   updateAllProgress();
   updateSidebarFaseLock();
@@ -2819,6 +3029,8 @@ function saveDocMeta(fase,id){
 }
 function removeDoc(fase,id){
   if(!confirm('Hapus dokumen yang sudah diupload?'))return;
+  // GAS: Hapus file dari Drive
+  gasDeleteFile(fase, id);
   var docs=getDocs(fase);
   var def=docs.find(function(d){return d.id===id;});
   if(APP.docs[fase][id]){
@@ -3158,194 +3370,76 @@ function saveGasUrl(){
   APP.gasUrl=url;localStorage.setItem('molas_gas',url);
   toast('Google Apps Script URL disimpan!','success');
 }
-// ════════════════════════════════════════
-// GAS — UPLOAD FILE (LENGKAP)
-// Tambahan: docTitle, jenis, user, loading indicator, gasFileId
-// ════════════════════════════════════════
 async function uploadToGAS(fase,id,file){
   if(!APP.gasUrl)return;
-  var rowEl=document.getElementById('docrow-'+id);
-  if(rowEl){
-    var gasTag=document.createElement('span');
-    gasTag.id='gas-uploading-'+id;
-    gasTag.style.cssText='font-size:10px;font-weight:600;color:var(--teal);background:var(--teal-light);border:1px solid var(--teal);border-radius:20px;padding:2px 9px;margin-left:6px';
-    gasTag.textContent='☁️ Mengunggah…';
-    var statusDiv=rowEl.querySelector('.doc-status');
-    if(statusDiv) statusDiv.appendChild(gasTag);
-  }
   try{
-    var reader=new FileReader();
-    reader.onload=async function(e){
-      var b64=e.target.result.split(',')[1];
-      var docs=getDocs(fase);
-      var def=docs.find(function(d){return d.id===id;});
-      try{
-        var res=await fetch(APP.gasUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-          action    :'upload_file',
-          fileName  :file.name,
-          mimeType  :file.type,
-          base64Data:b64,
-          folder    :fase,
-          docId     :id,
-          docTitle  :def?def.title:'',
-          ketua     :APP.tim.ketua,
-          stNomor   :APP.tim.stNomor,
-          jenis     :APP.jenisPengawasan||'',
-          user      :APP.user||'',
-        })});
-        var data=await res.json();
-        if(data&&data.success&&data.fileUrl){
-          if(!APP.docs[fase][id])APP.docs[fase][id]={};
-          APP.docs[fase][id].gdriveLink=data.fileUrl;
-          APP.docs[fase][id].gasFileId=data.fileId||'';
-          saveState();renderDocList(fase);
-          toast('☁️ File tersimpan ke Google Drive!','success');
-          gasLogActivity('Upload Berhasil','['+id+'] '+file.name+' ('+fase+')',fase);
-        } else if(data&&!data.success){
-          toast('⚠️ GAS: '+(data.message||'Upload gagal'),'error',5000);
-        }
-      }catch(e2){toast('Gagal terhubung ke GAS: '+e2.message,'error',5000);}
-      finally{var tag=document.getElementById('gas-uploading-'+id);if(tag)tag.remove();}
-    };
-    reader.readAsDataURL(file);
-  }catch(e){var tag=document.getElementById('gas-uploading-'+id);if(tag)tag.remove();}
-}
-
-// ════════════════════════════════════════
-// GAS — DELETE FILE DI DRIVE
-// ════════════════════════════════════════
-async function deleteFromGAS(fase,id){
-  if(!APP.gasUrl)return;
-  var docData=APP.docs[fase]&&APP.docs[fase][id];
-  if(!docData||!docData.gasFileId)return;
-  try{
-    var res=await fetch(APP.gasUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      action :'delete_file',
-      fileId :docData.gasFileId,
-      ketua  :APP.tim.ketua,
-      stNomor:APP.tim.stNomor,
-      fase   :fase,
-      user   :APP.user||'',
-    })});
-    var data=await res.json();
-    if(data&&data.success)toast('🗑️ File dihapus dari Google Drive.','warning');
-  }catch(e){}
-}
-
-// ════════════════════════════════════════
-// GAS — LOG AKTIVITAS MANUAL
-// ════════════════════════════════════════
-async function gasLogActivity(aksi,keterangan,fase){
-  if(!APP.gasUrl)return;
-  try{
-    await fetch(APP.gasUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      action    :'log_activity',
-      aksi      :aksi,
-      keterangan:keterangan,
-      ketua     :APP.tim.ketua,
-      stNomor   :APP.tim.stNomor,
-      fase      :fase||'—',
-      user      :APP.user||'',
-    })});
-  }catch(e){}
-}
-
-// ════════════════════════════════════════
-// GAS — GET SUMMARY (Admin Dashboard)
-// ════════════════════════════════════════
-async function loadSummaryFromGAS(){
-  if(!APP.gasUrl){toast('Hubungkan Google Apps Script terlebih dahulu.','error');return;}
-  var btn=document.getElementById('btnLoadGASSummary');
-  if(btn){btn.disabled=true;btn.textContent='⏳ Memuat…';}
-  try{
-    var res=await fetch(APP.gasUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'get_summary'})});
-    var data=await res.json();
-    if(data&&data.success&&data.rows){
-      renderGASSummaryTable(data.rows);
-      toast('📊 '+data.total+' data tim berhasil dimuat dari Sheets.','success');
+    var docMeta=(APP.docs[fase]&&APP.docs[fase][id])||{};
+    var docs=getDocs(fase);
+    var def=docs?docs.find(function(d){return d.id===id;}):null;
+    var docTitle=def?def.title:id;
+    var b64=await fileToBase64(file);
+    toast('☁️ Mengupload ke Drive: '+file.name+'...','info',3000);
+    var result=await gasPost({
+      action:'upload_file',
+      fileName:file.name,
+      mimeType:file.type||'application/octet-stream',
+      base64Data:b64,
+      folder:fase,
+      docId:id,
+      docTitle:docTitle,
+      ketua:APP.tim.ketua||'—',
+      stNomor:APP.tim.stNomor||'—',
+      stPerihal:APP.tim.stPerihal||'—',
+      jenis:APP.jenisPengawasan||'',
+      user:APP.user||'—',
+      nomor_dok:docMeta.nomor||'',
+      keadaan:docMeta.keadaan||'',
+      catatan:docMeta.catatan||'',
+    },'upload_file');
+    if(result&&result.success&&result.fileUrl){
+      if(!APP.docs[fase][id])APP.docs[fase][id]={};
+      APP.docs[fase][id].gdriveLink=result.fileUrl;
+      APP.docs[fase][id].driveFileId=result.fileId;
+      saveState();renderDocList(fase);
+      toast('☁️ '+file.name+' tersimpan ke Google Drive!','success');
     } else {
-      toast('Gagal memuat summary: '+(data&&data.message||'tidak ada data'),'error');
+      toast('⚠️ Upload Drive gagal: '+(result?result.message:'Tidak ada respons'),'warning',5000);
     }
-  }catch(e){toast('Koneksi GAS gagal: '+e.message,'error',5000);}
-  finally{if(btn){btn.disabled=false;btn.textContent='🔄 Muat dari Sheets';}}
+  }catch(err){
+    console.error('[MOLAS GAS] uploadToGAS:',err);
+    toast('⚠️ Koneksi GAS gagal: '+err.message,'warning',4000);
+  }
 }
-function renderGASSummaryTable(rows){
-  var el=document.getElementById('gasSummaryTableWrap');if(!el)return;
-  if(!rows||!rows.length){el.innerHTML='<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Belum ada data di Google Sheets.</div>';return;}
-  var html='<div style="overflow-x:auto;margin-top:12px"><table style="width:100%;border-collapse:collapse;font-size:12px">'
-    +'<thead><tr style="background:var(--ink);color:#fff">'
-    +'<th style="padding:8px 10px;text-align:left">No.</th><th style="padding:8px 10px;text-align:left">No. ST</th>'
-    +'<th style="padding:8px 10px;text-align:left">Ketua Tim</th>'
-    +'<th style="padding:8px 10px;text-align:center">F1</th><th style="padding:8px 10px;text-align:center">F2</th>'
-    +'<th style="padding:8px 10px;text-align:center">F3</th><th style="padding:8px 10px;text-align:center">Total</th>'
-    +'<th style="padding:8px 10px;text-align:center">Status</th></tr></thead><tbody>';
-  rows.forEach(function(r,i){
-    var st=r['Status']||'—';
-    var stColor=st.includes('Selesai')?'var(--green)':st.includes('Hampir')?'var(--teal)':st==='Berjalan'?'var(--amber)':'var(--muted)';
-    html+='<tr style="border-bottom:1px solid var(--line);background:'+(i%2===0?'var(--white)':'var(--surface)')+';">'
-      +'<td style="padding:7px 10px;text-align:center;font-weight:700;color:var(--muted)">'+(i+1)+'</td>'
-      +'<td style="padding:7px 10px;font-size:11px">'+(r['No. Surat Tugas']||'—')+'</td>'
-      +'<td style="padding:7px 10px;font-weight:600">'+(r['Ketua Tim']||'—')+'</td>'
-      +'<td style="padding:7px 10px;text-align:center;color:var(--accent);font-weight:700">'+(r['Fase 1 (%)']||0)+'%</td>'
-      +'<td style="padding:7px 10px;text-align:center;color:var(--amber);font-weight:700">'+(r['Fase 2 (%)']||0)+'%</td>'
-      +'<td style="padding:7px 10px;text-align:center;color:var(--green);font-weight:700">'+(r['Fase 3 (%)']||0)+'%</td>'
-      +'<td style="padding:7px 10px;text-align:center;font-family:\'Sora\',sans-serif;font-size:15px;font-weight:800;color:var(--ink)">'+(r['Total Progress (%)']||0)+'%</td>'
-      +'<td style="padding:7px 10px;text-align:center;font-weight:700;color:'+stColor+'">'+st+'</td></tr>';
-  });
-  html+='</tbody></table></div>';
-  el.innerHTML=html;
-}
-
-// ════════════════════════════════════════
-// GAS — TEST / PING KONEKSI
-// ════════════════════════════════════════
-async function testGASConnection(){
-  var url=APP.gasUrl||(document.getElementById('gasUrlInput')?document.getElementById('gasUrlInput').value.trim():'');
-  if(!url){toast('Masukkan URL GAS terlebih dahulu.','error');return;}
-  var btn=document.getElementById('btnTestGAS');
-  if(btn){btn.disabled=true;btn.textContent='⏳ Mengecek…';}
-  var statusEl=document.getElementById('gasTestStatus');
-  if(statusEl)statusEl.style.display='none';
-  try{
-    var res=await fetch(url,{method:'GET'});
-    var data=await res.json();
-    var ok=data&&data.status&&data.status.includes('aktif');
-    if(statusEl){
-      statusEl.style.cssText='display:block;padding:10px 14px;border-radius:var(--r2);font-size:12px;margin-top:10px;border:1px solid '+(ok?'var(--green)':'var(--amber)')+';background:'+(ok?'var(--green-light)':'var(--amber-light)')+';color:'+(ok?'var(--green)':'var(--amber)');
-      statusEl.innerHTML=ok?'✅ <strong>GAS Aktif!</strong> Versi: '+(data.version||'—')+' | Instansi: '+(data.instansi||'—'):'⚠️ Respons diterima tapi format tidak dikenali.';
-    }
-    if(ok)toast('✅ Koneksi GAS berhasil!','success');else toast('⚠️ GAS merespons tapi tidak dikenali.','warning');
-  }catch(e){
-    if(statusEl){statusEl.style.cssText='display:block;padding:10px 14px;border-radius:var(--r2);font-size:12px;margin-top:10px;border:1px solid var(--red);background:var(--red-light);color:var(--red)';statusEl.innerHTML='❌ <strong>Gagal terhubung.</strong> Periksa URL GAS.<br><small>'+e.message+'</small>';}
-    toast('❌ Koneksi GAS gagal.','error',5000);
-  }finally{if(btn){btn.disabled=false;btn.textContent='🔌 Test Koneksi';}}
-}
-
 async function pushToGSheet(){
-  var url=APP.gasUrl||APP.gsheetUrl;if(!url)return;
+  var url=APP.gasUrl||APP.gsheetUrl;if(!url)return {success:false,message:'GAS URL belum dikonfigurasi.'};
   var p=getTotalProgress();
-  try{
-    await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      action        :'update_progress',
-      ketua         :APP.tim.ketua,
-      st_nomor      :APP.tim.stNomor,
-      st_perihal    :APP.tim.stPerihal,
-      stTanggal     :APP.tim.stTanggal||'',
-      jenis         :APP.jenisPengawasan?JENIS_META[APP.jenisPengawasan].title:'—',
-      fase1_pct     :p.p1.pct,fase1_uploaded:p.p1.uploaded,fase1_total:p.p1.total,
-      fase2_pct     :p.p2.pct,fase2_uploaded:p.p2.uploaded,fase2_total:p.p2.total,
-      fase3_pct     :p.p3.pct,fase3_uploaded:p.p3.uploaded,fase3_total:p.p3.total,
-      total_pct     :p.pct,total_uploaded:p.totalUploaded,total_docs:p.totalDocs,
-      timestamp     :new Date().toISOString(),
-      user          :APP.user||'',
-    })});
-  }catch(e){}
+  var result = await gasPost({
+    action:'update_progress',
+    ketua:APP.tim.ketua||'—',
+    st_nomor:APP.tim.stNomor||'—',
+    st_perihal:APP.tim.stPerihal||'—',
+    jenis:APP.jenisPengawasan||'',
+    fase1_pct:p.p1.pct, fase1_uploaded:p.p1.uploaded, fase1_total:p.p1.total,
+    fase2_pct:p.p2.pct, fase2_uploaded:p.p2.uploaded, fase2_total:p.p2.total,
+    fase3_pct:p.p3.pct, fase3_uploaded:p.p3.uploaded, fase3_total:p.p3.total,
+    total_pct:p.pct, total_uploaded:p.totalUploaded, total_docs:p.totalDocs,
+    timestamp:new Date().toISOString(),
+    user:APP.user||'—',
+  },'update_progress');
+  if(!result||!result.success){console.warn('[MOLAS GAS] pushToGSheet:',result&&result.message);}
+  return result;
 }
-function exportSheets(){
+async function exportSheets(){
   if(!APP.gasUrl&&!APP.gsheetUrl){toast('Hubungkan Google Apps Script atau Sheets terlebih dahulu','warning',4000);switchPanel('gdrive');return;}
-  pushToGSheet();
-  gasLogActivity('Export Manual','Sinkronisasi progress ke Google Sheets','all');
-  saveState();toast('📊 Data dikirim ke Google Sheets!','success');
+  toast('📊 Mengirim data ke Google Sheets...','info',3000);
+  var progResult=await pushToGSheet();
+  var jadwalResult=await gasSyncJadwal();
+  saveState();
+  if(progResult&&progResult.success){
+    toast('✅ Data progress & jadwal berhasil dikirim ke Google Sheets!','success');
+  } else {
+    toast('⚠️ Gagal mengirim ke Google Sheets: '+(progResult?progResult.message:'Tidak ada respons dari GAS'),'warning',6000);
+  }
 }
 
 // ════════════════════════════════════════
@@ -4020,12 +4114,16 @@ function saveJadwalForm(){
     addLog('Jadwal baru: '+nama,'upload');
   }
   saveJadwal(); closeModal(); renderJadwal(); scheduleNotifications();
+  // GAS: sinkronisasi jadwal ke Sheets
+  gasSyncJadwal();
 }
 
 function deleteJadwal(id){
   if(!confirm('Hapus jadwal ini?')) return;
   JADWAL_DB = JADWAL_DB.filter(function(x){return x.id!==id;});
   saveJadwal(); renderJadwal(); toast('Jadwal dihapus.','warning');
+  // GAS: sinkronisasi jadwal ke Sheets
+  gasSyncJadwal();
 }
 
 function updateStatus(id, st){
@@ -4375,16 +4473,18 @@ document.addEventListener('DOMContentLoaded',function(){
       +'<div style="display:flex;gap:10px">'
         +'<input class="fi" id="gasUrlInput" placeholder="https://script.google.com/macros/s/xxx/exec" style="flex:1">'
         +'<button class="btn btn-primary" onclick="saveGasUrl()">Simpan</button>'
+        +'<button class="btn btn-outline" onclick="testGasConnection()">Tes Koneksi</button>'
       +'</div>'
     +'</div>'
     +'<div style="background:var(--surface);border-radius:var(--r2);padding:14px;font-size:11px;color:var(--muted);line-height:1.8;border:1px solid var(--line)">'
       +'💡 <strong>Cara deploy Google Apps Script:</strong><br>'
-      +'1. Buka <a href="https://script.google.com" target="_blank" style="color:var(--accent)">script.google.com</a> → Buat proyek baru<br>'
-      +'2. Buat fungsi <code>doPost(e)</code> yang menerima JSON dan menyimpan ke Drive + Sheets<br>'
+      +'1. Buka <a href="https://script.google.com" target="_blank" style="color:var(--accent)">script.google.com</a> → Buat proyek baru, lalu paste script MOLAS_GAS_Script.gs<br>'
+      +'2. Isi <code>CONFIG.SPREADSHEET_ID</code> dan <code>CONFIG.ROOT_FOLDER_ID</code> di bagian atas script, lalu jalankan <code>initSetup()</code> sekali (akan minta izin akses — klik Allow)<br>'
       +'3. Deploy → <em>New Deployment</em> → <em>Web App</em> → Execute as: <strong>Me</strong>, Access: <strong>Anyone</strong><br>'
-      +'4. Copy URL deployment dan paste di kolom di atas<br>'
+      +'4. Copy URL deployment (diakhiri <code>/exec</code>) dan paste di kolom di atas, lalu klik <strong>Tes Koneksi</strong><br>'
+      +'5. Kalau Anda mengedit script GAS lagi, buat <em>deployment versi baru</em> (Manage deployments → Edit → New version) — URL lama tidak otomatis pakai kode terbaru<br>'
       +'<div style="margin-top:10px;padding:10px;background:#fff3cd;border-radius:6px;color:#664d03;border-left:3px solid #c27803">'
-        +'<strong>Fungsi GAS yang dibutuhkan:</strong> Terima upload file → simpan ke folder Drive per fase → tulis rekap progress ke Google Sheets secara otomatis setiap kali dokumen diupload.'
+        +'<strong>Kalau upload/sinkron gagal terus:</strong> klik tombol "Tes Koneksi" di atas dulu. Kalau itu juga gagal, biasanya karena (a) Access deployment belum "Anyone", (b) URL bukan yang diakhiri /exec, atau (c) deployment belum di-update setelah edit script.'
       +'</div>'
     +'</div>'
     +'<div id="adminWarnings" style="margin-top:14px"></div>';
