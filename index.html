@@ -955,6 +955,13 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
         <div class="topbar-sub" id="topbarSub">Inspektorat Daerah Kabupaten Manggarai Barat — Irban IV</div>
       </div>
       <div class="topbar-right">
+        <!-- Tambahkan di panel Dashboard, di sebelah tombol export -->
+        <button class="btn btn-primary btn-sm" onclick="loadFromSheets()">
+          ☁️ Sinkronisasi
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="pushToGSheet()">
+          💾 Simpan ke Cloud
+        </button>
         <button class="btn btn-outline btn-sm" onclick="exportPDF()">📄 Ekspor PDF</button>
         <button class="btn btn-green btn-sm" onclick="exportSheets()">📊 Simpan ke Sheets</button>
         <div class="tb-badge online" id="connBadge">● Online</div>
@@ -2571,6 +2578,30 @@ function saveState(){
     localStorage.setItem('molas_multi_tim',JSON.stringify(existing));
     APP.multiTim=existing;
   }catch(e){console.error('saveState error:',e);}
+  if (APP.gasUrl && APP.tim.ketua) {
+    var p = getTotalProgress();
+    gasPost({
+      action: 'update_progress',
+      ketua: APP.tim.ketua || '—',
+      st_nomor: APP.tim.stNomor || '—',
+      st_perihal: APP.tim.stPerihal || '—',
+      jenis: APP.jenisPengawasan || 'rrs',
+      fase1_pct: p.p1.pct,
+      fase1_uploaded: p.p1.uploaded,
+      fase1_total: p.p1.total,
+      fase2_pct: p.p2.pct,
+      fase2_uploaded: p.p2.uploaded,
+      fase2_total: p.p2.total,
+      fase3_pct: p.p3.pct,
+      fase3_uploaded: p.p3.uploaded,
+      fase3_total: p.p3.total,
+      total_pct: p.pct,
+      total_uploaded: p.totalUploaded,
+      total_docs: p.totalDocs,
+      timestamp: new Date().toISOString(),
+      user: APP.user || '—'
+    }, 'update_progress');
+  }
 }
 
 // ════════════════════════════════════════
@@ -2651,6 +2682,16 @@ function initApp(){
   updateSidebarFaseLock();
   renderDashboard();
 
+  if (APP.gasUrl) {
+    loadFromSheets().then(function(success) {
+      if (success) {
+        renderDocLists();
+        updateAllProgress();
+        renderDashboard();
+        toast('Data berhasil dimuat dari cloud ☁️', 'success', 3000);
+      }
+    });
+  }
   if(APP.gdriveUrl){document.getElementById('gdriveUrl').value=APP.gdriveUrl;connectGDrive(true);}
   if(APP.gsheetUrl){document.getElementById('gsheetUrl').value=APP.gsheetUrl;document.getElementById('gsheetStatus').style.display='block';}
   if(APP.gasUrl&&document.getElementById('gasUrlInput'))document.getElementById('gasUrlInput').value=APP.gasUrl;
@@ -3442,6 +3483,63 @@ async function exportSheets(){
   }
 }
 
+// Di file HTML, tambahkan fungsi ini
+async function loadFromSheets() {
+  if (!APP.gasUrl) {
+    toast('GAS URL belum dikonfigurasi', 'warning');
+    return;
+  }
+  
+  toast('📥 Memuat data dari Google Sheets...', 'info', 3000);
+  
+  try {
+    // 1. Ambil data tim
+    var timResult = await gasPost({
+      action: 'get_rekap',
+      tahun: ''
+    }, 'get_rekap');
+    
+    if (timResult && timResult.success && timResult.data) {
+      // Konversi data dari Sheets ke format APP
+      var dataFromSheets = timResult.data;
+      var multiTim = [];
+      
+      dataFromSheets.forEach(function(row) {
+        var stNomor = row['No. Surat Tugas'] || '';
+        var ketua = row['Ketua Tim'] || '';
+        var id = (stNomor || ketua).replace(/[\/\s]/g, '_');
+        
+        multiTim.push({
+          id: id,
+          ketua: ketua,
+          stNomor: stNomor,
+          stPerihal: row['Perihal / Objek Reviu'] || '—',
+          stTanggal: '',
+          jenis: row['Jenis Pengawasan'] || '',
+          anggota: 0,
+          p1: Number(row['Fase 1 (%)']) || 0,
+          p2: Number(row['Fase 2 (%)']) || 0,
+          p3: Number(row['Fase 3 (%)']) || 0,
+          total: Number(row['Total (%)']) || 0,
+          lastUpdate: row['Timestamp Update'] || new Date().toISOString()
+        });
+      });
+      
+      localStorage.setItem('molas_multi_tim', JSON.stringify(multiTim));
+      APP.multiTim = multiTim;
+      
+      toast('✅ ' + multiTim.length + ' data tim dimuat dari Sheets', 'success');
+      renderDashboard();
+      refreshAdminDash();
+      return true;
+    }
+  } catch (err) {
+    console.error('loadFromSheets error:', err);
+    toast('Gagal memuat data dari Sheets', 'error');
+    return false;
+  }
+}
+  
 // ════════════════════════════════════════
 // EXPORT PDF — MULTI HALAMAN
 // ════════════════════════════════════════
