@@ -2092,30 +2092,27 @@ var APP = {
  * GAS tetap bisa JSON.parse(e.postData.contents) seperti biasa karena yang
  * dicek di sana adalah isi body, bukan header Content-Type.
  */
-async function gasPost(payload, label) {
-  var url = APP.gasUrl;
-  if (!url) return { success: false, message: 'GAS URL belum dikonfigurasi. Buka panel Google Drive → isi URL Web App GAS.' };
-  var raw = '';
+async function gasPost(payload) {
+  const url = 'https://script.google.com/macros/s/AKfycbzqnuGYIWKYg4Nknw07x9aPM2kks4OVK2ZfR9xpn-zYf11ea6ps9HSPgQvFmKUyrZY/exec'; // Ensure this is the /exec URL
   try {
-    var res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload),
+    const response = await fetch(url, {
+      method: 'POST', // Use POST
+      mode: 'no-cors', // Use 'no-cors' if you don't need to read the body, OR:
+      cache: 'no-cache',
+      headers: {
+        // Avoid 'application/json' to prevent CORS preflight OPTIONS request
+        'Content-Type': 'text/plain' 
+      },
+      body: JSON.stringify(payload)
     });
-    raw = await res.text();
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    try {
-      return JSON.parse(raw);
-    } catch (parseErr) {
-      // Respons bukan JSON → biasanya URL salah, GAS belum dideploy sebagai
-      // "Anyone" access, atau script GAS sedang error fatal (bukan dari try/catch).
-      throw new Error('Respons GAS bukan JSON (kemungkinan URL salah, deployment belum diatur "Anyone" access, atau script GAS error). Potongan respons: ' + raw.slice(0, 120));
-    }
+    // Note: With 'no-cors', you cannot read the response body. 
+    // If you need the response, ensure the GAS script is deployed as "Anyone".
   } catch (err) {
-    console.warn('[MOLAS GAS]', (label || payload.action), '—', err.message);
+    console.warn('[MOLAS GAS]', (payload.action), '—', err.message);
     return { success: false, message: err.message };
   }
 }
+
 
 /**
  * Tes koneksi ke Web App GAS dengan request GET sederhana (doGet).
