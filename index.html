@@ -955,13 +955,6 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
         <div class="topbar-sub" id="topbarSub">Inspektorat Daerah Kabupaten Manggarai Barat — Irban IV</div>
       </div>
       <div class="topbar-right">
-        <!-- Tambahkan di panel Dashboard, di sebelah tombol export -->
-        <button class="btn btn-primary btn-sm" onclick="loadFromSheets()">
-          ☁️ Sinkronisasi
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="pushToGSheet()">
-          💾 Simpan ke Cloud
-        </button>
         <button class="btn btn-outline btn-sm" onclick="exportPDF()">📄 Ekspor PDF</button>
         <button class="btn btn-green btn-sm" onclick="exportSheets()">📊 Simpan ke Sheets</button>
         <div class="tb-badge online" id="connBadge">● Online</div>
@@ -1080,7 +1073,10 @@ textarea.fi { resize: vertical; min-height: 80px; line-height: 1.5; }
             </div>
             <div class="fg">
               <label>Nomor Surat Tugas <span class="req">*</span></label>
-              <input class="fi" id="stNomor" placeholder="Contoh: 800/123/IRBAN/2024">
+              <div style="display:flex;gap:8px">
+                <input class="fi" id="stNomor" placeholder="Contoh: 800/123/IRBAN/2024" style="flex:1">
+                <button class="btn btn-outline btn-sm" type="button" onclick="loadTimFromServer()" title="Tarik data tim &amp; status dokumen yang sudah tersimpan di Sheets/Drive untuk No. ST ini — gunakan kalau membuka di perangkat/browser lain">📥 Muat</button>
+              </div>
             </div>
             <div class="fg">
               <label>Tanggal Surat Tugas <span class="req">*</span></label>
@@ -2092,27 +2088,41 @@ var APP = {
  * GAS tetap bisa JSON.parse(e.postData.contents) seperti biasa karena yang
  * dicek di sana adalah isi body, bukan header Content-Type.
  */
-async function gasPost(payload) {
-  const url = 'https://script.google.com/macros/s/AKfycbzqnuGYIWKYg4Nknw07x9aPM2kks4OVK2ZfR9xpn-zYf11ea6ps9HSPgQvFmKUyrZY/exec'; // Ensure this is the /exec URL
+async function gasPost(payload, label) {
+  var url = APP.gasUrl;
+  if (!url) return { success: false, message: 'GAS URL belum dikonfigurasi. Buka panel Google Drive → isi URL Web App GAS.' };
+  var raw = '';
   try {
-    const response = await fetch(url, {
-      method: 'POST', // Use POST
-      mode: 'no-cors', // Use 'no-cors' if you don't need to read the body, OR:
-      cache: 'no-cache',
-      headers: {
-        // Avoid 'application/json' to prevent CORS preflight OPTIONS request
-        'Content-Type': 'text/plain' 
-      },
-      body: JSON.stringify(payload)
+    var res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
     });
-    // Note: With 'no-cors', you cannot read the response body. 
-    // If you need the response, ensure the GAS script is deployed as "Anyone".
+    if (res.status === 403 || res.status === 401) {
+      throw new Error(
+        'GAS menolak request (HTTP ' + res.status + '). Ini BUKAN error di kode, tapi di setelan ' +
+        'deployment Web App-nya. Cek di script.google.com → Deploy → Manage deployments → edit ' +
+        'deployment ini: pastikan "Who has access" = Anyone (bukan "Anyone with Google account" ' +
+        'atau "Only myself"). Kalau sudah "Anyone" tapi tetap 403, kemungkinan akun Google ' +
+        'organisasi/instansi Anda dibatasi admin Workspace untuk mempublikasikan Apps Script ke ' +
+        'publik/anonim — perlu izin admin domain, atau gunakan akun Google pribadi (gmail biasa) ' +
+        'untuk membuat & deploy script ini.'
+      );
+    }
+    raw = await res.text();
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    try {
+      return JSON.parse(raw);
+    } catch (parseErr) {
+      // Respons bukan JSON → biasanya URL salah, GAS belum dideploy sebagai
+      // "Anyone" access, atau script GAS sedang error fatal (bukan dari try/catch).
+      throw new Error('Respons GAS bukan JSON (kemungkinan URL salah, deployment belum diatur "Anyone" access, atau script GAS error). Potongan respons: ' + raw.slice(0, 120));
+    }
   } catch (err) {
-    console.warn('[MOLAS GAS]', (payload.action), '—', err.message);
+    console.warn('[MOLAS GAS]', (label || payload.action), '—', err.message);
     return { success: false, message: err.message };
   }
 }
-
 
 /**
  * Tes koneksi ke Web App GAS dengan request GET sederhana (doGet).
@@ -2124,6 +2134,15 @@ async function testGasConnection() {
   toast('🔄 Menguji koneksi ke GAS...', 'info', 3000);
   try {
     var res = await fetch(url, { method: 'GET' });
+    if (res.status === 403 || res.status === 401) {
+      toast(
+        '❌ GAS menolak akses (HTTP ' + res.status + '). Buka Manage deployments di script.google.com, ' +
+        'pastikan "Who has access" = Anyone. Kalau sudah begitu tapi tetap ditolak, akun Google ' +
+        'instansi Anda mungkin dibatasi admin Workspace untuk web app publik.',
+        'error', 8000
+      );
+      return;
+    }
     var raw = await res.text();
     var data;
     try { data = JSON.parse(raw); } catch (e) {
@@ -2473,30 +2492,15 @@ function toast(msg,type,dur){
   setTimeout(function(){el.style.opacity='0';el.style.transform='translateX(20px)';el.style.transition='all .3s';setTimeout(function(){el.remove();},300);},dur);
 }
 function inits(n){if(!n)return'--';var p=n.trim().split(' ');return p.length===1?p[0].slice(0,2).toUpperCase():(p[0][0]+p[p.length-1][0]).toUpperCase();}
-function fmtDate(d) {
-  // Jika d adalah string, konversi ke Date
-  if (typeof d === 'string') {
-    d = new Date(d);
-  }
-  // Jika d bukan objek Date yang valid, gunakan waktu sekarang
-  if (!(d instanceof Date) || isNaN(d.getTime())) {
-    d = new Date();
-  }
-  
-  var dn = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
-  var mn = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-  
-  return dn[d.getDay()] + ', ' + 
-         d.getDate().toString().padStart(2, '0') + ' ' + 
-         mn[d.getMonth()] + ' ' + 
-         d.getFullYear() + ' ' + 
-         d.getHours().toString().padStart(2, '0') + ':' + 
-         d.getMinutes().toString().padStart(2, '0');
+function fmtDate(d){
+  d=d||new Date();
+  var dn=['Min','Sen','Sel','Rab','Kam','Jum','Sab'],mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+  return dn[d.getDay()]+', '+d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear()+' '+d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
 }
 function fmtDateShort(d){
-d=d?new Date(d):new Date();
-var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
-return d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear();
+  d=d?new Date(d):new Date();
+  var mn=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agt','Sep','Okt','Nov','Des'];
+  return d.getDate()+' '+mn[d.getMonth()]+' '+d.getFullYear();
 }
 function fileSize(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(1)+'KB';return(b/1048576).toFixed(2)+'MB';}
 function setEl(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
@@ -2590,30 +2594,6 @@ function saveState(){
     localStorage.setItem('molas_multi_tim',JSON.stringify(existing));
     APP.multiTim=existing;
   }catch(e){console.error('saveState error:',e);}
-  if (APP.gasUrl && APP.tim.ketua) {
-    var p = getTotalProgress();
-    gasPost({
-      action: 'update_progress',
-      ketua: APP.tim.ketua || '—',
-      st_nomor: APP.tim.stNomor || '—',
-      st_perihal: APP.tim.stPerihal || '—',
-      jenis: APP.jenisPengawasan || 'rrs',
-      fase1_pct: p.p1.pct,
-      fase1_uploaded: p.p1.uploaded,
-      fase1_total: p.p1.total,
-      fase2_pct: p.p2.pct,
-      fase2_uploaded: p.p2.uploaded,
-      fase2_total: p.p2.total,
-      fase3_pct: p.p3.pct,
-      fase3_uploaded: p.p3.uploaded,
-      fase3_total: p.p3.total,
-      total_pct: p.pct,
-      total_uploaded: p.totalUploaded,
-      total_docs: p.totalDocs,
-      timestamp: new Date().toISOString(),
-      user: APP.user || '—'
-    }, 'update_progress');
-  }
 }
 
 // ════════════════════════════════════════
@@ -2694,38 +2674,162 @@ function initApp(){
   updateSidebarFaseLock();
   renderDashboard();
 
-  if (APP.gasUrl) {
-    loadFromSheets().then(function(success) {
-      if (success) {
-        renderDocLists();
-        updateAllProgress();
-        renderDashboard();
-        toast('Data berhasil dimuat dari cloud ☁️', 'success', 3000);
-      }
-    });
-  }
   if(APP.gdriveUrl){document.getElementById('gdriveUrl').value=APP.gdriveUrl;connectGDrive(true);}
   if(APP.gsheetUrl){document.getElementById('gsheetUrl').value=APP.gsheetUrl;document.getElementById('gsheetStatus').style.display='block';}
   if(APP.gasUrl&&document.getElementById('gasUrlInput'))document.getElementById('gasUrlInput').value=APP.gasUrl;
 
   // Restore setup form fields
-  if(APP.tim.stNomor&&document.getElementById('stNomor')){
-    document.getElementById('stNomor').value=APP.tim.stNomor||'';
-    document.getElementById('stTanggal').value=APP.tim.stTanggal||'';
-    document.getElementById('stPerihal').value=APP.tim.stPerihal||'';
-    if(document.getElementById('wakilPJ'))document.getElementById('wakilPJ').value=APP.tim.wakilPJ||'';
-    if(document.getElementById('wakilPJNIP'))document.getElementById('wakilPJNIP').value=APP.tim.wakilPJNIP||'';
-    if(document.getElementById('pengendaliTeknis'))document.getElementById('pengendaliTeknis').value=APP.tim.pengendali||'';
-    if(document.getElementById('pengendaliNIP'))document.getElementById('pengendaliNIP').value=APP.tim.pengendaliNIP||'';
-    if(document.getElementById('ketuaTim'))document.getElementById('ketuaTim').value=APP.tim.ketua||'';
-    if(document.getElementById('ketuaNIP'))document.getElementById('ketuaNIP').value=APP.tim.ketuaNIP||'';
-  }
+  populateSetupFormFields();
   setTimeout(function(){if(!APP.tim.ketua&&APP.role!=='admin')toast('Mulai dari Setup Tim untuk memulai.','info',5000);},800);
+
+  // Auto-sync: kalau device baru & GAS sudah dikonfigurasi, tarik sesi terakhir dari Sheets
+  // Dibungkus setTimeout agar UI selesai render dulu sebelum fetch ke GAS.
+  setTimeout(function(){ autoSyncLatestSession(); }, 1200);
 }
 
-// ════════════════════════════════════════
-// NAVIGATION
-// ════════════════════════════════════════
+/** Isi field-field form Setup Tim dari APP.tim (dipakai saat restore localStorage maupun setelah loadTimFromServer). */
+function populateSetupFormFields(){
+  if(!APP.tim.stNomor||!document.getElementById('stNomor'))return;
+  document.getElementById('stNomor').value=APP.tim.stNomor||'';
+  document.getElementById('stTanggal').value=APP.tim.stTanggal||'';
+  document.getElementById('stPerihal').value=APP.tim.stPerihal||'';
+  if(document.getElementById('wakilPJ'))document.getElementById('wakilPJ').value=APP.tim.wakilPJ||'';
+  if(document.getElementById('wakilPJNIP'))document.getElementById('wakilPJNIP').value=APP.tim.wakilPJNIP||'';
+  if(document.getElementById('pengendaliTeknis'))document.getElementById('pengendaliTeknis').value=APP.tim.pengendali||'';
+  if(document.getElementById('pengendaliNIP'))document.getElementById('pengendaliNIP').value=APP.tim.pengendaliNIP||'';
+  if(document.getElementById('ketuaTim'))document.getElementById('ketuaTim').value=APP.tim.ketua||'';
+  if(document.getElementById('ketuaNIP'))document.getElementById('ketuaNIP').value=APP.tim.ketuaNIP||'';
+  if(typeof renderMemberList==='function')renderMemberList();
+}
+
+/**
+ * Tarik kembali data tim + status dokumen yang sudah tersimpan di
+ * Spreadsheet/Drive berdasarkan No. Surat Tugas. Ini yang membuat data
+ * "muncul lagi" saat MOLAS dibuka di browser/perangkat lain — karena
+ * localStorage itu sendiri memang cuma cache lokal per-device, BUKAN
+ * tempat penyimpanan utama. Sumber kebenarannya selalu Sheets + Drive.
+ */
+async function loadTimFromServer(){
+  var stNomorEl=document.getElementById('stNomor');
+  var stNomor=stNomorEl?stNomorEl.value.trim():'';
+  if(!stNomor){toast('Isi Nomor Surat Tugas dulu, lalu klik "Muat" lagi','warning');return;}
+  if(!APP.gasUrl){toast('Hubungkan Google Apps Script dulu di panel Google Drive','warning');switchPanel('gdrive');return;}
+
+  toast('🔄 Memuat data tim & dokumen dari Sheets/Drive...','info',3000);
+  var result=await gasPost({action:'get_tim_detail',stNomor:stNomor},'get_tim_detail');
+  if(!result||!result.success){
+    toast('⚠️ '+(result?result.message:'Gagal memuat data dari server'),'warning',6000);
+    return;
+  }
+
+  // ── Rebuild APP.tim dari sheet "Data Tim Reviu" ──
+  if(result.tim){
+    var t=result.tim;
+    APP.tim.ketua         = t['Ketua Tim']      || APP.tim.ketua;
+    APP.tim.ketuaNIP      = t['NIP Ketua']       || '';
+    APP.tim.wakilPJ       = t['Wakil / PJ']      || '';
+    APP.tim.wakilPJNIP    = t['NIP Wakil']       || '';
+    APP.tim.pengendali    = t['Pengendali Mutu'] || '';
+    APP.tim.pengendaliNIP = t['NIP Pengendali']  || '';
+    APP.tim.stNomor       = t['No. Surat Tugas'] || stNomor;
+    APP.tim.stTanggal     = t['Tanggal ST']      || '';
+    APP.tim.stPerihal     = t['Perihal ST']      || '';
+    var anggotaStr = t['Anggota Tim']||'';
+    APP.tim.anggota = anggotaStr ? anggotaStr.split(';').map(function(s){
+      var m=s.trim().match(/^(.*)\(([^)]*)\)$/);
+      return m?{nama:m[1].trim(),nip:m[2].trim()}:{nama:s.trim(),nip:''};
+    }).filter(function(a){return a.nama;}) : [];
+    var jenisLabel=t['Jenis Pengawasan']||'';
+    var foundKey=Object.keys(JENIS_META).find(function(k){return JENIS_META[k].title===jenisLabel;});
+    if(foundKey)APP.jenisPengawasan=foundKey;
+  } else if(result.progress){
+    // Kalau tim belum pernah disimpan tapi progress ada, minimal isi nomor/perihal/ketua
+    APP.tim.stNomor   = result.progress['No. Surat Tugas']        || stNomor;
+    APP.tim.stPerihal = result.progress['Perihal / Objek Reviu']  || APP.tim.stPerihal;
+    APP.tim.ketua     = result.progress['Ketua Tim']              || APP.tim.ketua;
+  }
+
+  // ── Rebuild APP.docs dari sheet "Daftar Dokumen" ──
+  // Bisa ada beberapa baris per docId (kalau pernah upload ulang) — ambil yang terakhir.
+  var stSuratTugasRow=null;
+  if(Array.isArray(result.dokumen)){
+    result.dokumen.forEach(function(row){
+      var fase  = row['Fase'];
+      var docId = row['Doc ID'];
+      if(!fase||!docId)return;
+      if(docId==='ST-SURAT-TUGAS'){ stSuratTugasRow=row; return; }
+      if(!APP.docs[fase])APP.docs[fase]={};
+      if(!APP.docs[fase][docId])APP.docs[fase][docId]={};
+      var d=APP.docs[fase][docId];
+      var fileId=row['File ID Drive']||'';
+      d.hasUploaded = true;
+      d.fileName    = String(row['Nama File']||'').replace(/^.*?\s—\s/,'');
+      d.driveFileId = fileId;
+      d.gdriveLink  = fileId ? ('https://drive.google.com/file/d/'+fileId+'/view') : '';
+      d.nomor       = row['Nomor Dokumen']        || '';
+      d.keadaan     = row['Keadaan Pelaksanaan']  || '';
+      d.catatan     = row['Catatan']              || '';
+      if(row['Waktu Upload'])d.uploadedAt=new Date(row['Waktu Upload']);
+    });
+  }
+  // File Surat Tugas tidak bisa di-restore sebagai File object lintas perangkat,
+  // tapi badge & link Drive-nya bisa ditampilkan kembali.
+  if(stSuratTugasRow&&document.getElementById('stBadge')){
+    var stFileId=stSuratTugasRow['File ID Drive'];
+    document.getElementById('stZoneIco').textContent='✅';
+    document.getElementById('stZoneTitle').textContent=String(stSuratTugasRow['Nama File']||'Surat Tugas').replace(/^.*?\s—\s/,'');
+    document.getElementById('stZoneSub').textContent='Tersimpan di Drive · Klik untuk ganti';
+    document.getElementById('stUploadZone').classList.add('has-file');
+    document.getElementById('stBadge').innerHTML = stFileId
+      ? '<a href="https://drive.google.com/file/d/'+stFileId+'/view" target="_blank"><span class="badge badge-green">✅ ST Tersimpan di Drive</span></a>'
+      : '<span class="badge badge-green">✅ ST Tersimpan</span>';
+  }
+
+  populateSetupFormFields();
+  saveState();
+  renderDocLists();
+  updateAllProgress();
+  updateSidebarFaseLock();
+  renderDashboard();
+  toast('✅ Data tim & '+(result.dokumen?result.dokumen.length:0)+' dokumen berhasil dimuat dari server!','success',4000);
+}
+
+/**
+ * AUTO-SYNC saat aplikasi dibuka di perangkat/browser baru.
+ * Dipanggil otomatis di akhir initApp(). Hanya jalan jika:
+ *  - GAS URL sudah dikonfigurasi (APP.gasUrl ada), DAN
+ *  - Belum ada sesi aktif di localStorage device ini (APP.tim.stNomor kosong)
+ *
+ * Alur:
+ *  1. Tanya GAS: sesi terakhir user ini apa? (get_latest_session)
+ *  2. Kalau ada → set stNomor di form, lalu panggil loadTimFromServer()
+ *     yang akan menarik semua detail tim + dokumen dari Sheets.
+ *  3. Kalau tidak ada (user baru / spreadsheet kosong) → diam saja.
+ */
+async function autoSyncLatestSession() {
+  if (!APP.gasUrl) return;            // GAS belum dikonfigurasi — skip
+  if (APP.tim.stNomor) return;        // Sudah ada state lokal — skip
+
+  try {
+    var result = await gasPost({ action: 'get_latest_session', user: APP.user || '' }, 'get_latest_session');
+    if (!result || !result.success || !result.stNomor) return;
+
+    // Isi No. Surat Tugas di form Setup Tim
+    var stNomorEl = document.getElementById('stNomor');
+    if (stNomorEl) stNomorEl.value = result.stNomor;
+    APP.tim.stNomor = result.stNomor;
+
+    toast('🔄 Sesi terakhir ditemukan (' + result.stNomor + ') — memuat data...', 'info', 3000);
+
+    // Tarik semua detail dari Sheets
+    await loadTimFromServer();
+  } catch (err) {
+    console.warn('autoSyncLatestSession error (non-fatal):', err);
+  }
+}
+
+
+
 var PANEL_META={
   dashboard:{title:'Dashboard Monitoring',sub:'Ringkasan progress seluruh fase Reviu Rencana Strategis'},
   tujuan:   {title:'Tujuan & Manfaat MOLAS',sub:'Informasi tujuan dan manfaat penggunaan website MOLAS'},
@@ -2927,6 +3031,12 @@ function saveSetup(){
   updateAllProgress();
   updateSidebarFaseLock();
   renderDashboard();
+  // GAS: file Surat Tugas yang dilampirkan di zona upload sebelumnya BARU
+  // sekarang benar-benar dikirim ke Drive (sebelumnya hanya tersimpan di
+  // memori browser dan hilang lagi setelah refresh / pindah perangkat).
+  if(APP.tim.stFile&&APP.gasUrl){
+    uploadToGAS('fase1','ST-SURAT-TUGAS',APP.tim.stFile,'Surat Tugas (ST)');
+  }
   toast('Data tim berhasil disimpan! Lanjut ke Fase Perencanaan.','success');
   setTimeout(function(){switchPanel('fase1');},700);
 }
@@ -3423,13 +3533,13 @@ function saveGasUrl(){
   APP.gasUrl=url;localStorage.setItem('molas_gas',url);
   toast('Google Apps Script URL disimpan!','success');
 }
-async function uploadToGAS(fase,id,file){
+async function uploadToGAS(fase,id,file,docTitleOverride){
   if(!APP.gasUrl)return;
   try{
     var docMeta=(APP.docs[fase]&&APP.docs[fase][id])||{};
     var docs=getDocs(fase);
     var def=docs?docs.find(function(d){return d.id===id;}):null;
-    var docTitle=def?def.title:id;
+    var docTitle=docTitleOverride||(def?def.title:id);
     var b64=await fileToBase64(file);
     toast('☁️ Mengupload ke Drive: '+file.name+'...','info',3000);
     var result=await gasPost({
@@ -3495,72 +3605,6 @@ async function exportSheets(){
   }
 }
 
-// Di file HTML, tambahkan fungsi ini
-async function loadFromSheets() {
-  if (!APP.gasUrl) {
-    toast('GAS URL belum dikonfigurasi', 'warning');
-    return false;
-  }
-  
-  toast('📥 Memuat data dari Google Sheets...', 'info', 3000);
-  
-  try {
-    var timResult = await gasPost({
-      action: 'get_rekap',
-      tahun: ''
-    }, 'get_rekap');
-    
-    if (!timResult || !timResult.success) {
-      toast('Gagal memuat data: ' + (timResult ? timResult.message : 'Tidak ada respons'), 'warning');
-      return false;
-    }
-    
-    if (timResult.data && timResult.data.length > 0) {
-      var multiTim = [];
-      
-      timResult.data.forEach(function(row) {
-        var stNomor = row['No. Surat Tugas'] || '';
-        var ketua = row['Ketua Tim'] || '';
-        var id = (stNomor || ketua).replace(/[\/\s]/g, '_');
-        
-        multiTim.push({
-          id: id || 'tim_' + Date.now(),
-          ketua: ketua,
-          stNomor: stNomor,
-          stPerihal: row['Perihal / Objek Reviu'] || '—',
-          stTanggal: '',
-          jenis: row['Jenis Pengawasan'] || '',
-          anggota: 0,
-          p1: Number(row['Fase 1 (%)']) || 0,
-          p2: Number(row['Fase 2 (%)']) || 0,
-          p3: Number(row['Fase 3 (%)']) || 0,
-          total: Number(row['Total (%)']) || 0,
-          lastUpdate: row['Timestamp Update'] || new Date().toISOString()
-        });
-      });
-      
-      localStorage.setItem('molas_multi_tim', JSON.stringify(multiTim));
-      APP.multiTim = multiTim;
-      
-      toast('✅ ' + multiTim.length + ' data tim dimuat dari Sheets', 'success');
-      
-      // Update tampilan
-      renderDashboard();
-      if (typeof refreshAdminDash === 'function') refreshAdminDash();
-      if (typeof populateDRFilters === 'function') populateDRFilters();
-      
-      return true;
-    } else {
-      toast('ℹ️ Belum ada data di Sheets', 'info');
-      return false;
-    }
-  } catch (err) {
-    console.error('loadFromSheets error:', err);
-    toast('Gagal memuat data dari Sheets: ' + err.message, 'error');
-    return false;
-  }
-}
-  
 // ════════════════════════════════════════
 // EXPORT PDF — MULTI HALAMAN
 // ════════════════════════════════════════
